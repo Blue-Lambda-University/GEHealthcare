@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP and RAG in the Warehouse Incident Solution</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --geh-purple: #6b2d5c;
+      --geh-purple-light: #8b4a7a;
+      --text: #1a1a1a;
+      --text-muted: #555;
+      --border: #ddd;
+      --bg-subtle: #f5f5f5;
+      --bg-table: #fafafa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      line-height: 1.6;
+      color: var(--text);
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #fff;
+    }
+    header {
+      border-bottom: 2px solid var(--geh-purple);
+      padding-bottom: 1rem;
+      margin-bottom: 2rem;
+    }
+    header p { margin: 0.25rem 0; color: var(--text-muted); font-size: 0.95rem; }
+    h1 { color: var(--geh-purple); font-size: 1.75rem; margin: 0 0 0.5rem 0; }
+    h2 { color: var(--geh-purple); font-size: 1.35rem; margin: 2rem 0 1rem; padding-top: 0.5rem; }
+    h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--geh-purple-light); }
+    h4 { font-size: 1rem; margin: 1rem 0 0.5rem; }
+    p { margin: 0.5rem 0; }
+    strong { color: var(--text); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+      background: var(--bg-table);
+    }
+    th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: var(--geh-purple); color: #fff; font-weight: 600; }
+    tr:nth-child(even) { background: #fff; }
+    ul, ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+    li { margin: 0.25rem 0; }
+    .mermaid {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      background: var(--bg-subtle);
+      border-radius: 6px;
+      overflow-x: auto;
+      min-height: 120px;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    .doc-control { font-size: 0.85rem; color: var(--text-muted); margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .toc { background: var(--bg-subtle); padding: 1rem 1.5rem; border-radius: 6px; margin-bottom: 2rem; }
+    .toc ul { list-style: none; padding-left: 0; margin: 0; }
+    .toc li { margin: 0.35rem 0; }
+    .toc a { color: var(--geh-purple); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MCP and RAG in the Warehouse Incident Solution</h1>
+    <p><strong>Document type:</strong> Design extension (MCP and RAG)</p>
+    <p><strong>Context:</strong> GE HealthCare – Warehouse incident management, P1/P2/P3 classification (GSPO)</p>
+    <p><strong>Source:</strong> Extends 05-Architectural-Design-Warehouse-Incident and Warehouse-Incident-Design-Combined</p>
+    <p><strong>Author:</strong> Omolewa Adaramola</p>
+    <p><strong>Status:</strong> Design only; no code implied.</p>
+  </header>
+
+  <nav class="toc" aria-label="Table of contents">
+    <h2 id="toc">Contents</h2>
+    <ul>
+      <li><a href="#purpose">1. Purpose and Scope</a></li>
+      <li><a href="#mcp">2. MCP (Model Context Protocol)</a></li>
+      <li><a href="#rag">3. RAG (Retrieval-Augmented Generation)</a></li>
+      <li><a href="#together">4. MCP and RAG Together</a></li>
+      <li><a href="#summary">5. Summary</a></li>
+      <li><a href="#refs">6. References</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section id="purpose">
+      <h2>1. Purpose and Scope</h2>
+      <p>This document describes how <strong>Model Context Protocol (MCP)</strong> and <strong>Retrieval-Augmented Generation (RAG)</strong> can be included in the ServiceNow + LLM warehouse incident solution. It is an extension to the architectural design: the same flows (intake, 2hr monitor, P1 automation) and components (Orchestrator, Policy Engine, Context Aggregator, LLM Gateway) remain; MCP and RAG change <em>how</em> integration and retrieval are implemented and named.</p>
+      <p><strong>In scope:</strong> Where MCP and RAG fit in the architecture; mapping current adapters to MCP servers; explicit RAG for knowledge and policy; benefits and options.</p>
+      <p><strong>Out of scope:</strong> Detailed MCP tool schemas, vector store implementation, or prompt text.</p>
+    </section>
+
+    <section id="mcp">
+      <h2>2. MCP (Model Context Protocol)</h2>
+      <h3>2.1 What is MCP?</h3>
+      <p><strong>Model Context Protocol (MCP)</strong> is an open protocol that lets LLM applications access <strong>tools</strong>, <strong>resources</strong>, and <strong>prompts</strong> from external servers in a standardized way. Servers expose capabilities (e.g. “get incident context”, “get warehouse health snapshot”); clients discover and invoke them via the protocol. MCP is increasingly adopted (e.g. Cursor, Claude, Copilot Studio) for AI–tool integration.</p>
+
+      <h3>2.2 Current Design vs MCP</h3>
+      <table>
+        <thead><tr><th>Current (adapters)</th><th>With MCP</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ServiceNow Adapter</strong> – direct REST or mid-server calls</td><td><strong>ServiceNow MCP Server</strong> – tools such as <code>get_incident</code>, <code>get_incident_context</code> (CMDB, related, assignment), <code>write_work_notes</code>, <code>write_ai_fields</code>, <code>set_priority</code> (if allowed by guardrails).</td></tr>
+          <tr><td><strong>Warehouse Signals Adapter</strong> – direct calls to OTM, xCarrier, MSCA</td><td><strong>Warehouse Signals MCP Server</strong> – tool such as <code>get_warehouse_health_snapshot(site_id)</code>; server encapsulates OTM, xCarrier, MSCA.</td></tr>
+          <tr><td><strong>Log Service</strong> – direct queries to Splunk/Elastic/etc.</td><td><strong>Log MCP Server</strong> – tool such as <code>get_log_excerpts(site, ci, time_window, app)</code>.</td></tr>
+          <tr><td><strong>Knowledge Retriever</strong> – direct ServiceNow Knowledge API</td><td><strong>Knowledge MCP Server</strong> – tools such as <code>search_knowledge(category, ci, query)</code>, <code>get_articles_by_linkage(incident_id)</code>; can also expose a RAG-style retrieval tool.</td></tr>
+        </tbody>
+      </table>
+      <p>The <strong>Orchestrator</strong> (or <strong>Context Aggregator</strong>) uses an <strong>MCP client</strong> to discover (<code>tools/list</code>) and invoke (<code>tools/call</code>) these tools instead of calling adapters directly. Policy Engine and LLM Gateway are unchanged.</p>
+
+      <h3>2.3 Architecture with MCP</h3>
+      <div class="mermaid">
+flowchart TB
+  subgraph Orchestration["Orchestration Layer"]
+    Orch[Orchestrator]
+    MCP_Client[MCP Client]
+  end
+  subgraph Context["Context and Decision"]
+    ContextAgg[Context Aggregator]
+    PolicyEngine[Policy Engine]
+    LLMGateway[LLM Gateway]
+  end
+  subgraph MCP_Servers["MCP Servers (Integration)"]
+    MCP_SN[ServiceNow MCP Server]
+    MCP_WH[Warehouse Signals MCP Server]
+    MCP_Log[Log MCP Server]
+    MCP_KB[Knowledge MCP Server]
+  end
+  subgraph External["External Systems"]
+    SN[(ServiceNow)]
+    OTM[(OTM)]
+    xC[(xCarrier)]
+    MSCA[(MSCA)]
+    LogStore[(Log Aggregation)]
+    LLM[LLM Provider]
+  end
+  Orch --> ContextAgg
+  Orch --> PolicyEngine
+  ContextAgg <--> MCP_Client
+  MCP_Client <--> MCP_SN
+  MCP_Client <--> MCP_WH
+  MCP_Client <--> MCP_Log
+  MCP_Client <--> MCP_KB
+  Orch --> LLMGateway
+  LLMGateway --> LLM
+  Orch --> MCP_Client
+  MCP_SN <--> SN
+  MCP_WH --> OTM
+  MCP_WH --> xC
+  MCP_WH --> MSCA
+  MCP_Log --> LogStore
+  MCP_KB --> SN
+      </div>
+
+      <h3>2.4 MCP Server Responsibilities (Conceptual)</h3>
+      <table>
+        <thead><tr><th>MCP Server</th><th>Example tools</th><th>Backing</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ServiceNow MCP Server</strong></td><td><code>get_incident(id)</code>, <code>get_incident_context(id)</code>, <code>write_work_notes(id, text)</code>, <code>write_ai_fields(id, fields)</code>, <code>set_priority(id, priority)</code></td><td>ServiceNow REST or mid-server</td></tr>
+          <tr><td><strong>Warehouse Signals MCP Server</strong></td><td><code>get_warehouse_health_snapshot(site_id)</code></td><td>OTM, xCarrier, MSCA (or aggregated API)</td></tr>
+          <tr><td><strong>Log MCP Server</strong></td><td><code>get_log_excerpts(site, ci, time_window, app)</code></td><td>Splunk, Elastic, Datadog, etc.</td></tr>
+          <tr><td><strong>Knowledge MCP Server</strong></td><td><code>search_knowledge(category, ci, query)</code>, <code>get_articles_by_linkage(incident_id)</code>, optionally <code>retrieve_relevant_articles(incident_summary)</code> (RAG)</td><td>ServiceNow Knowledge (and optionally vector store)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>2.5 Benefits of MCP in This Solution</h3>
+      <ul>
+        <li><strong>Single protocol:</strong> One way to discover and call all integration capabilities; new data sources = new MCP server, orchestrator unchanged.</li>
+        <li><strong>Clear boundaries:</strong> Each MCP server owns credentials and logic for one system; orchestrator stays agnostic of implementation.</li>
+        <li><strong>Ecosystem alignment:</strong> Fits Copilot Studio and other tools that support MCP; same servers can be reused for other workflows.</li>
+        <li><strong>Extensibility:</strong> Add Policy MCP Server (e.g. <code>get_relevant_policy(incident_summary)</code>) for policy RAG without changing the core flow.</li>
+      </ul>
+    </section>
+
+    <section id="rag">
+      <h2>3. RAG (Retrieval-Augmented Generation)</h2>
+      <h3>3.1 What is RAG?</h3>
+      <p><strong>Retrieval-Augmented Generation (RAG)</strong> means: <strong>retrieve</strong> relevant information from external sources (knowledge base, policy, logs), <strong>augment</strong> the LLM prompt with that context, then <strong>generate</strong> (summary, priority suggestion, justification, drafts). The LLM uses up-to-date, domain-specific content you provide, not only its training.</p>
+
+      <h3>3.2 RAG in the Current Design</h3>
+      <p>The existing design already implements a RAG-like pattern for <strong>knowledge</strong>:</p>
+      <ul>
+        <li><strong>Retrieve:</strong> Context Aggregator (via Knowledge Retriever) pulls ServiceNow Knowledge articles by linkage, category, CI, or search; returns snippets.</li>
+        <li><strong>Augment:</strong> Snippets are included in the payload sent to the LLM (e.g. <code>knowledge_snippets</code>).</li>
+        <li><strong>Generate:</strong> LLM uses them to suggest next steps, draft communications, and avoid contradicting SOPs.</li>
+      </ul>
+      <p>This can be <strong>named explicitly as RAG (knowledge)</strong> in the architecture. No new component is required; the flow remains the same.</p>
+
+      <h3>3.3 Policy RAG (Optional)</h3>
+      <p><strong>Current:</strong> Policy (Incident Priority Definitions, GSPO warehouse rules) is summarized in the prompt or passed as static text.</p>
+      <p><strong>With policy RAG:</strong> Store policy as searchable content (e.g. chunks in a vector store or structured docs). For each incident, <strong>retrieve</strong> the most relevant policy snippets. Feed those snippets into the prompt so the LLM “reads the same playbook” as the rules. Implementation options:</p>
+      <ul>
+        <li><strong>Policy MCP Server</strong> with tool <code>get_relevant_policy(incident_summary)</code> that performs retrieval and returns chunks.</li>
+        <li><strong>Context Aggregator</strong> calls a policy retrieval service (or MCP tool) before building the LLM payload; result is merged into the “policy summary” section of the prompt.</li>
+      </ul>
+
+      <h3>3.4 Knowledge RAG Options</h3>
+      <table>
+        <thead><tr><th>Option</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Current (pre-fetch)</strong></td><td>Retrieve by linkage/category/CI/keyword; cap count and length; send snippets in payload. Already RAG in spirit; name it as such.</td></tr>
+          <tr><td><strong>Semantic / vector RAG</strong></td><td>Embed incident description; query a vector index of KB articles; return top-k chunks; add to payload. Implement inside Knowledge Retriever or Knowledge MCP Server.</td></tr>
+          <tr><td><strong>Hybrid</strong></td><td>Keep linkage/category for “must-have” articles; add vector search for “similar articles” to enrich context.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>3.5 Where RAG Sits in the Flow</h3>
+      <ul>
+        <li><strong>Retrieve:</strong> Done by Context Aggregator (or MCP client calling Knowledge/Policy/Log tools). Output: knowledge snippets, optional policy chunks, log excerpts.</li>
+        <li><strong>Augment:</strong> LLM Gateway (or Orchestrator) builds the prompt with this retrieved context plus incident, snapshot, and policy result.</li>
+        <li><strong>Generate:</strong> LLM returns structured output (priority, confidence, justification, suggested actions).</li>
+      </ul>
+      <p>The existing “Warehouse Incident Intake” sequence is unchanged; the “get context” step is explicitly the <strong>RAG retrieve</strong> step, and the prompt build is the <strong>augment</strong> step.</p>
+
+      <h3>3.6 RAG and Data Flow (Conceptual)</h3>
+      <div class="mermaid">
+flowchart LR
+  subgraph Retrieve["Retrieve (RAG)"]
+    KB[Knowledge]
+    Policy[Policy]
+    Logs[Log excerpts]
+  end
+  subgraph Augment["Augment"]
+    Payload[Enriched payload + policy result]
+  end
+  subgraph Generate["Generate"]
+    LLM[LLM]
+    Out[Structured output]
+  end
+  KB --> Payload
+  Policy --> Payload
+  Logs --> Payload
+  Payload --> LLM
+  LLM --> Out
+      </div>
+    </section>
+
+    <section id="together">
+      <h2>4. MCP and RAG Together</h2>
+      <ul>
+        <li><strong>MCP</strong> defines <em>how</em> the orchestrator gets data: via MCP servers (ServiceNow, Warehouse, Log, Knowledge, optionally Policy) instead of direct adapters.</li>
+        <li><strong>RAG</strong> defines <em>what</em> we do with that data: retrieve relevant knowledge (and optionally policy), then augment the LLM prompt.</li>
+      </ul>
+      <p>The <strong>Knowledge MCP Server</strong> can expose both “get articles by linkage/category/search” and, if desired, a “RAG query” tool (e.g. vector search over KB). A <strong>Policy MCP Server</strong> can expose <code>get_relevant_policy(incident_summary)</code> for policy RAG. The Orchestrator (or Context Aggregator) calls these tools, gets retrieved context, and passes it to the LLM Gateway; the LLM Gateway still builds the augmented prompt and calls the LLM. No change to Policy Engine or guardrails (rules override, no auto-downgrade of P1).</p>
+    </section>
+
+    <section id="summary">
+      <h2>5. Summary</h2>
+      <table>
+        <thead><tr><th>Topic</th><th>Inclusion</th></tr></thead>
+        <tbody>
+          <tr><td><strong>MCP</strong></td><td>Add an MCP Client in the orchestration/context layer; implement ServiceNow, Warehouse Signals, Log, and Knowledge as MCP servers with tools as above. Orchestrator (or Context Aggregator) uses MCP client instead of direct adapter calls.</td></tr>
+          <tr><td><strong>RAG</strong></td><td>Name existing knowledge retrieval + prompt augmentation as <strong>RAG (knowledge)</strong>. Optionally add <strong>policy RAG</strong> (retrieve relevant policy chunks per incident). Optionally add <strong>semantic/vector RAG</strong> for knowledge inside Knowledge Retriever or Knowledge MCP Server.</td></tr>
+          <tr><td><strong>Together</strong></td><td>MCP = integration protocol; RAG = retrieve → augment → generate. Knowledge (and optionally Policy) MCP servers can implement RAG-style tools; orchestrator flow stays the same.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="refs">
+      <h2>6. References</h2>
+      <ul>
+        <li><strong>05-Architectural-Design-Warehouse-Incident.md</strong> – Base architectural design.</li>
+        <li><strong>Warehouse-Incident-Design-Combined.md</strong> – Combined design (Parts I–III).</li>
+        <li><strong>docs/03-Custom-Option-2-Outline.md</strong> – Section 10: MCP in Custom Option 2 (same pattern applied here).</li>
+        <li><strong>docs/04-Architectural-Design-Custom-Option-2.md</strong> – MCP client and MCP servers in logical and deployment views.</li>
+      </ul>
+    </section>
+
+    <p class="doc-control">This document extends the warehouse incident architectural design with MCP and RAG. Design only; no code.</p>
+  </main>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'neutral',
+      securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true },
+      sequence: { useMaxWidth: true }
+    });
+  </script>
+</body>
+</html>

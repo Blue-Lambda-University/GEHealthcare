@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architectural Design: ServiceNow + LLM Warehouse Incident Management</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --geh-purple: #6b2d5c;
+      --geh-purple-light: #8b4a7a;
+      --text: #1a1a1a;
+      --text-muted: #555;
+      --border: #ddd;
+      --bg-subtle: #f5f5f5;
+      --bg-table: #fafafa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      line-height: 1.6;
+      color: var(--text);
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #fff;
+    }
+    header {
+      border-bottom: 2px solid var(--geh-purple);
+      padding-bottom: 1rem;
+      margin-bottom: 2rem;
+    }
+    header p { margin: 0.25rem 0; color: var(--text-muted); font-size: 0.95rem; }
+    h1 { color: var(--geh-purple); font-size: 1.75rem; margin: 0 0 0.5rem 0; }
+    h2 { color: var(--geh-purple); font-size: 1.35rem; margin: 2rem 0 1rem; padding-top: 0.5rem; }
+    h3 { font-size: 1.1rem; margin: 1.5rem 0 0.5rem; color: var(--geh-purple-light); }
+    h4 { font-size: 1rem; margin: 1rem 0 0.5rem; }
+    p { margin: 0.5rem 0; }
+    strong { color: var(--text); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+      background: var(--bg-table);
+    }
+    th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: var(--geh-purple); color: #fff; font-weight: 600; }
+    tr:nth-child(even) { background: #fff; }
+    ul, ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+    li { margin: 0.25rem 0; }
+    .mermaid {
+      margin: 1.5rem 0;
+      padding: 1rem;
+      background: var(--bg-subtle);
+      border-radius: 6px;
+      overflow-x: auto;
+      min-height: 120px;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+    .doc-control { font-size: 0.85rem; color: var(--text-muted); margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .toc { background: var(--bg-subtle); padding: 1rem 1.5rem; border-radius: 6px; margin-bottom: 2rem; }
+    .toc ul { list-style: none; padding-left: 0; margin: 0; }
+    .toc li { margin: 0.35rem 0; }
+    .toc a { color: var(--geh-purple); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Architectural Design: ServiceNow + LLM Warehouse Incident Management</h1>
+    <p><strong>Document type:</strong> Architectural Design</p>
+    <p><strong>Context:</strong> GE HealthCare – Warehouse incident management, P1/P2/P3 classification (GSPO)</p>
+    <p><strong>Source:</strong> Derived from Warehouse-Incident-Design</p>
+    <p><strong>Status:</strong> Design only; no code implied.</p>
+    <p><strong>Author:</strong> Omolewa Adaramola</p>
+  </header>
+
+  <nav class="toc" aria-label="Table of contents">
+    <h2 id="toc">Contents</h2>
+    <ul>
+      <li><a href="#purpose">1. Purpose and Scope</a></li>
+      <li><a href="#context">2. System Context</a></li>
+      <li><a href="#goals">3. Architectural Goals and Constraints</a></li>
+      <li><a href="#logical">4. Logical Architecture</a></li>
+      <li><a href="#components">5. Component Design</a></li>
+      <li><a href="#flows">6. Data Flows</a></li>
+      <li><a href="#deployment">7. Deployment View</a></li>
+      <li><a href="#security">8. Security and Governance</a></li>
+      <li><a href="#decisions">9. Key Design Decisions</a></li>
+      <li><a href="#refs">10. References</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <section id="purpose">
+      <h2>1. Purpose and Scope</h2>
+      <p>This document describes the <strong>architectural design</strong> for the ServiceNow + LLM warehouse incident solution: how components are structured, how data flows from incident creation through policy rules and LLM to ServiceNow updates, and how external systems (OTM, xCarrier, MSCA, logs, Knowledge) integrate. It is intended for solution architects and implementers. It does not specify implementation code.</p>
+      <p><strong>In scope:</strong> System context, logical architecture, component responsibilities and interfaces, data flows, security and governance, key design decisions.</p>
+      <p><strong>Out of scope:</strong> Detailed API specs, database DDL, or prompt text.</p>
+    </section>
+
+    <section id="context">
+      <h2>2. System Context</h2>
+      <h3>2.1 Actors</h3>
+      <table>
+        <thead><tr><th>Actor</th><th>Role</th><th>Interaction</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Caller / Warehouse ops</strong></td><td>Reports incident</td><td>Creates or updates incident in ServiceNow (Category Warehouse/Logistics).</td></tr>
+          <tr><td><strong>Agent / Resolver</strong></td><td>Triage and resolve</td><td>Views incident, sees AI-suggested priority and justification, approves or overrides; uses suggested next steps and draft comms.</td></tr>
+          <tr><td><strong>Manager / On-call</strong></td><td>Escalation and major incident</td><td>Receives P1 notifications; runs bridge; may override priority or approve LLM suggestion.</td></tr>
+          <tr><td><strong>System</strong></td><td>Automation</td><td>Triggers intake flow on incident create/update; runs 2-hour monitor on schedule; triggers P1 automation when priority = P1.</td></tr>
+        </tbody>
+      </table>
+      <h3>2.2 External Systems</h3>
+      <table>
+        <thead><tr><th>System</th><th>Role</th><th>Direction</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ServiceNow</strong></td><td>System of record for incidents, CMDB, Knowledge, assignment, Major Incident</td><td>Bidirectional: read incident + context; write priority, work notes, AI fields.</td></tr>
+          <tr><td><strong>OTM</strong></td><td>Transportation management signals (backlog, late shipments, throughput)</td><td>Outbound: orchestrator or adapter pulls metrics.</td></tr>
+          <tr><td><strong>xCarrier</strong></td><td>Shipping execution signals (label failures, print queue, station errors)</td><td>Outbound: orchestrator or adapter pulls metrics.</td></tr>
+          <tr><td><strong>MSCA</strong></td><td>Warehouse execution / RF (scanner sync, login, transaction queue, latency)</td><td>Outbound: orchestrator or adapter pulls metrics.</td></tr>
+          <tr><td><strong>Log aggregation</strong></td><td>Application, integration, infra, audit logs (e.g. Splunk, Elastic, Datadog)</td><td>Outbound: log service or orchestrator pulls excerpts by time/site/CI.</td></tr>
+          <tr><td><strong>LLM provider</strong></td><td>Azure OpenAI, OpenAI, or other – for summarization, priority suggestion, justification, drafts</td><td>Outbound: orchestrator or LLM gateway calls API.</td></tr>
+        </tbody>
+      </table>
+      <h3>2.3 Context Diagram</h3>
+      <div class="mermaid">
+flowchart LR
+  subgraph Users["Users"]
+    Caller[Caller / Warehouse Ops]
+    Agent[Agent / Resolver]
+    Manager[Manager / On-call]
+  end
+  subgraph System["Warehouse Incident System"]
+    Orch[Orchestrator]
+  end
+  subgraph External["External Systems"]
+    SN[ServiceNow]
+    OTM[OTM]
+    xCarrier[xCarrier]
+    MSCA[MSCA]
+    Logs[Log Aggregation]
+    LLM[LLM Provider]
+  end
+  Caller --> SN
+  Agent --> SN
+  Manager --> SN
+  SN <--> Orch
+  Orch --> OTM
+  Orch --> xCarrier
+  Orch --> MSCA
+  Orch --> Logs
+  Orch --> LLM
+      </div>
+    </section>
+
+    <section id="goals">
+      <h2>3. Architectural Goals and Constraints</h2>
+      <h3>3.1 Goals</h3>
+      <ul>
+        <li><strong>ServiceNow as system of record:</strong> All incident state and AI outputs live in ServiceNow; no duplicate system of record.</li>
+        <li><strong>Policy-first:</strong> Deterministic rules (warehouse min P2, ops halted → P1, 2hr monitor, security → P1) run first and can override or bound LLM output.</li>
+        <li><strong>Enriched context:</strong> LLM receives incident + CMDB + related + knowledge base + warehouse health snapshot + log excerpts.</li>
+        <li><strong>Auditability:</strong> Full audit of what was pulled, what rules fired, what the LLM returned, and who approved or overrode.</li>
+        <li><strong>Safety:</strong> No automatic downgrade of P1 without approval; optional human approval for all P1 or for LLM-suggested P1 when rules did not set P1.</li>
+      </ul>
+      <h3>3.2 Constraints</h3>
+      <ul>
+        <li>No direct LLM write to production incident priority without guardrails (rules override or human approval).</li>
+        <li>PHI/PII: Redact in logs and in any stored payload before sending to LLM or logging.</li>
+        <li>Token and cost: Enriched payload must be size-limited (truncation, snippet caps).</li>
+      </ul>
+    </section>
+
+    <section id="logical">
+      <h2>4. Logical Architecture</h2>
+      <h3>4.1 Layered View</h3>
+      <div class="mermaid">
+flowchart TB
+  subgraph Trigger["Trigger Layer"]
+    SN_Event[ServiceNow Event / Flow]
+    Scheduler[2hr Monitor Scheduler]
+  end
+  subgraph Orchestration["Orchestration Layer"]
+    Orchestrator[Orchestrator]
+  end
+  subgraph Context["Context and Decision Layer"]
+    PolicyEngine[Policy / Rules Engine]
+    ContextAgg[Context Aggregator]
+    LLMGateway[LLM Gateway]
+  end
+  subgraph Integration["Integration Layer"]
+    SN_Adapter[ServiceNow Adapter]
+    WarehouseAdapter[Warehouse Signals Adapter]
+    LogService[Log Service]
+    KB_Retriever[Knowledge Retriever]
+  end
+  subgraph External["External Systems"]
+    ServiceNow[(ServiceNow)]
+    OTM[(OTM)]
+    xC[(xCarrier)]
+    MSCA[(MSCA)]
+    LogStore[(Log Aggregation)]
+    LLM_Provider[LLM Provider]
+  end
+  SN_Event --> Orchestrator
+  Scheduler --> Orchestrator
+  Orchestrator --> ContextAgg
+  Orchestrator --> PolicyEngine
+  ContextAgg --> SN_Adapter
+  ContextAgg --> WarehouseAdapter
+  ContextAgg --> LogService
+  ContextAgg --> KB_Retriever
+  PolicyEngine --> Orchestrator
+  Orchestrator --> LLMGateway
+  LLMGateway --> LLM_Provider
+  Orchestrator --> SN_Adapter
+  SN_Adapter --> ServiceNow
+  WarehouseAdapter --> OTM
+  WarehouseAdapter --> xC
+  WarehouseAdapter --> MSCA
+  LogService --> LogStore
+  KB_Retriever --> ServiceNow
+      </div>
+      <h3>4.2 Component Summary</h3>
+      <table>
+        <thead><tr><th>Layer</th><th>Component</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Trigger</strong></td><td>ServiceNow event / flow</td><td>Fires on incident create or update (e.g. Category = Warehouse/Logistics); invokes orchestrator.</td></tr>
+          <tr><td><strong>Trigger</strong></td><td>2hr monitor scheduler</td><td>Runs on schedule; finds warehouse P2 incidents past 2hr deadline; invokes orchestrator for re-check and possible P1 escalation.</td></tr>
+          <tr><td><strong>Orchestration</strong></td><td>Orchestrator</td><td>Coordinates flow: get context → run policy → build payload → call LLM → write back to ServiceNow; handles errors and retries.</td></tr>
+          <tr><td><strong>Context & Decision</strong></td><td>Policy / Rules Engine</td><td>Applies deterministic rules; returns applied_priority and reason.</td></tr>
+          <tr><td><strong>Context & Decision</strong></td><td>Context Aggregator</td><td>Calls adapters and assembles incident + snapshot + logs + knowledge_snippets.</td></tr>
+          <tr><td><strong>Context & Decision</strong></td><td>LLM Gateway</td><td>Sends enriched payload + policy to LLM; parses structured JSON; validates and returns.</td></tr>
+          <tr><td><strong>Integration</strong></td><td>ServiceNow Adapter</td><td>Reads incident, CMDB, related, assignment, warehouse fields; writes AI recommendation, work notes, priority (if allowed).</td></tr>
+          <tr><td><strong>Integration</strong></td><td>Warehouse Signals Adapter</td><td>Pulls from OTM, xCarrier, MSCA; returns warehouse health snapshot.</td></tr>
+          <tr><td><strong>Integration</strong></td><td>Log Service</td><td>Queries log aggregation by time, site, CI, app; returns truncated excerpts; redacts PHI/PII.</td></tr>
+          <tr><td><strong>Integration</strong></td><td>Knowledge Retriever</td><td>Queries ServiceNow Knowledge by linkage, category, CI, or search; returns knowledge_snippets.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="components">
+      <h2>5. Component Design</h2>
+      <h3>5.1 Orchestrator</h3>
+      <p><strong>Responsibility:</strong> Single entry point for both incident intake and 2hr monitor flows. Coordinates context aggregation, policy execution, LLM call, and write-back.</p>
+      <p><strong>Flow (intake):</strong> Receive trigger → Call Context Aggregator → Call Policy Engine → Build LLM payload → Call LLM Gateway → Apply guardrails → Call ServiceNow Adapter to write work notes, u_ai_*, optionally priority → Set 2hr monitor if P2 warehouse; notify resolver group.</p>
+      <p><strong>Flow (2hr monitor):</strong> Receive list of incident IDs → For each: refresh context and policy → If impact grown or not resolved → escalate to P1, update ServiceNow, trigger P1 automation → Post automated work note.</p>
+      <p><strong>Interfaces:</strong> Input: incident_id, trigger_type (intake | 2hr_monitor). Output: success/failure; optional callback for escalate to human.</p>
+
+      <h3>5.2 Policy / Rules Engine</h3>
+      <p><strong>Responsibility:</strong> Pure deterministic logic. No LLM. Input: structured fields (site, warehouse_type, ops_state, stations_impacted_count, workaround_present, workaround_quality, security_compliance_risk). Output: applied_priority (P1|P2|P3), reason, rule_triggered, start_2hr_monitor.</p>
+      <p><strong>Rules:</strong> (1) security_compliance_risk → P1. (2) operations_halted OR stations_impacted >= threshold → P1. (3) services_warehouse AND below threshold → min P2; start_2hr_monitor = true. (4) Else → standard ITIL or pass-through.</p>
+
+      <h3>5.3 Context Aggregator</h3>
+      <p>Assembles all context for one incident: calls ServiceNow Adapter, Warehouse Signals Adapter, Log Service, Knowledge Retriever; normalizes into payload shape; applies time window and token/size caps.</p>
+      <p><strong>Interface:</strong> Input: incident_id, options. Output: enriched payload.</p>
+
+      <h3>5.4 LLM Gateway</h3>
+      <p>Single point of call to LLM provider. Builds prompt with policy summary and enriched payload; requests structured JSON (priority, confidence, justification, suggested_actions, missing_information); validates response; redacts PHI/PII as needed.</p>
+
+      <h3>5.5–5.8 Adapters and Services</h3>
+      <p><strong>ServiceNow Adapter:</strong> Read incident, CMDB, related, assignment, Knowledge; write u_ai_*, work notes, optionally priority. Uses ServiceNow REST or mid-server; credentials in vault.</p>
+      <p><strong>Warehouse Signals Adapter:</strong> Call OTM, xCarrier, MSCA (or aggregated API); map to warehouse health snapshot schema.</p>
+      <p><strong>Log Service:</strong> Query log aggregation by time, site, CI, app; return truncated excerpts; redact PHI/PII; return empty or "Logs unavailable" on failure.</p>
+      <p><strong>Knowledge Retriever:</strong> Query ServiceNow Knowledge by category, CI, or search; return list of { title, snippet } with length cap.</p>
+    </section>
+
+    <section id="flows">
+      <h2>6. Data Flows</h2>
+      <h3>6.1 Warehouse Incident Intake (Flow 1)</h3>
+      <div class="mermaid">
+sequenceDiagram
+  participant SN as ServiceNow
+  participant Orch as Orchestrator
+  participant Ctx as Context Aggregator
+  participant SN_A as ServiceNow Adapter
+  participant WH_A as Warehouse Adapter
+  participant Log as Log Service
+  participant KB as Knowledge Retriever
+  participant Policy as Policy Engine
+  participant LLM_G as LLM Gateway
+  participant LLM as LLM Provider
+  SN->>Orch: Trigger (incident created/updated)
+  Orch->>Ctx: Get context(incident_id)
+  Ctx->>SN_A: Get incident, CMDB, related, assignment
+  Ctx->>WH_A: Get health snapshot(site)
+  Ctx->>Log: Get logs(site, CI, time_window)
+  Ctx->>KB: Get knowledge(category, CI, search)
+  SN_A-->>Ctx: incident, ci, related, assignment
+  WH_A-->>Ctx: warehouse_health_snapshot
+  Log-->>Ctx: log_excerpts
+  KB-->>Ctx: knowledge_snippets
+  Ctx-->>Orch: enriched_payload
+  Orch->>Policy: Evaluate(structured_fields)
+  Policy-->>Orch: policy_result
+  Orch->>LLM_G: Call(enriched_payload, policy_result, policy_summary)
+  LLM_G->>LLM: Prompt + payload
+  LLM-->>LLM_G: JSON (priority, confidence, justification)
+  LLM_G-->>Orch: structured_output
+  Orch->>Orch: Apply guardrails
+  Orch->>SN_A: Write work notes, u_ai_*, optionally priority
+  SN_A->>SN: Update incident
+  Orch->>SN: Set 2hr monitor if P2 warehouse
+      </div>
+      <h3>6.2 2-Hour Warehouse Monitor (Flow 2)</h3>
+      <p>Orchestrator receives incident IDs from scheduler. For each: refresh context and policy; if impact grown or still not resolved → escalate to P1, update ServiceNow, trigger P1 automation; post automated work note.</p>
+      <h3>6.3 P1 Major Incident Automation (Flow 3)</h3>
+      <p>Triggered when priority = P1. Steps: open bridge, notify on-call, notify leadership, start update cadence, maintain executive summary. May be in ServiceNow or via Orchestrator.</p>
+    </section>
+
+    <section id="deployment">
+      <h2>7. Deployment View (Conceptual)</h2>
+      <div class="mermaid">
+flowchart TB
+  subgraph ServiceNow["ServiceNow Cloud"]
+    SN[Incident / CMDB / Knowledge / Flows]
+  end
+  subgraph AppTier["Application Tier"]
+    Orch[Orchestrator]
+    Policy[Policy Engine]
+    Ctx[Context Aggregator]
+    LLM_G[LLM Gateway]
+  end
+  subgraph IntegrationTier["Integration Tier"]
+    SN_Adapter[ServiceNow Adapter]
+    WH_Adapter[Warehouse Adapter]
+    LogSvc[Log Service]
+    KB_Retriever[Knowledge Retriever]
+  end
+  subgraph External["External"]
+    OTM[OTM]
+    xC[xCarrier]
+    MSCA[MSCA]
+    LogStore[Log Aggregation]
+    LLM_Provider[LLM Provider]
+  end
+  SN <--> SN_Adapter
+  Orch --> Policy
+  Orch --> Ctx
+  Orch --> LLM_G
+  Ctx --> SN_Adapter
+  Ctx --> WH_Adapter
+  Ctx --> LogSvc
+  Ctx --> KB_Retriever
+  Orch --> SN_Adapter
+  WH_Adapter --> OTM
+  WH_Adapter --> xC
+  WH_Adapter --> MSCA
+  LogSvc --> LogStore
+  KB_Retriever --> SN
+  LLM_G --> LLM_Provider
+      </div>
+      <p>ServiceNow remains in its cloud tenant. Orchestrator, Policy Engine, Context Aggregator, LLM Gateway can run in one or more services (e.g. cloud function, container). Adapters and Log Service need network access to ServiceNow, OTM/xCarrier/MSCA, and log aggregation. Secrets in vault; no secrets in code.</p>
+    </section>
+
+    <section id="security">
+      <h2>8. Security and Governance</h2>
+      <ul>
+        <li><strong>Authentication:</strong> ServiceNow adapter uses OAuth or API token (vault). Warehouse, log, and LLM use respective credentials (vault).</li>
+        <li><strong>Authorization:</strong> Service identity with least privilege (read incident/CMDB/Knowledge, write incident/work notes) in ServiceNow.</li>
+        <li><strong>Data:</strong> PHI/PII redaction in logs and payloads before LLM or audit log.</li>
+        <li><strong>Audit:</strong> Log for each run: incident_id, trigger_type, policy_result, LLM input summary (no PHI), LLM output, final priority, who approved/overrode. Retain per GE HealthCare policy.</li>
+        <li><strong>No auto-downgrade of P1</strong> without explicit approval (configurable guardrail).</li>
+      </ul>
+    </section>
+
+    <section id="decisions">
+      <h2>9. Key Design Decisions</h2>
+      <table>
+        <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ServiceNow as system of record</strong></td><td>Single source of truth; no sync of incident state elsewhere.</td></tr>
+          <tr><td><strong>Policy engine runs before LLM</strong></td><td>Deterministic rules enforce safety and warehouse policy; LLM augments within bounds.</td></tr>
+          <tr><td><strong>Enriched payload (incident + snapshot + logs + knowledge)</strong></td><td>LLM can summarize and justify with evidence; better drafts and next steps.</td></tr>
+          <tr><td><strong>Structured LLM output (JSON)</strong></td><td>Enables automation and guardrails; validation prevents invalid priority.</td></tr>
+          <tr><td><strong>Optional human-in-the-loop for P1 / downgrade</strong></td><td>Aligns with Incident Priority Definitions; reduces misclassification risk.</td></tr>
+          <tr><td><strong>Separate adapters for ServiceNow, warehouse, logs, knowledge</strong></td><td>Clear boundaries; each can be replaced or scaled independently.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <p class="doc-control">This architectural design is derived from the warehouse incident design.</p>
+  </main>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'neutral',
+      securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true },
+      sequence: { useMaxWidth: true }
+    });
+  </script>
+</body>
+</html>
